@@ -8,7 +8,7 @@
 </head>
 <body>
   <!-- Barra superior de herramientas y exportación -->
-  <header class="topbar">
+  <header class="topbar" id="topbar">
     <div class="topbar-left">
       <img src="icons/icon48.png" alt="Captura Pro" class="logo" />
       <div class="meta-info">
@@ -49,7 +49,7 @@
       </div>
     </div>
 
-    <!-- Botones de Guardado (PDF e Imagen) -->
+    <!-- Botones de Guardado (PDF e Imagen) y Salir -->
     <div class="topbar-right">
       <div class="export-group pdf-group">
         <select id="pdfLayoutSelect" class="pdf-select" title="Elige el tipo de formato de página del PDF">
@@ -72,8 +72,27 @@
           📋 Copiar
         </button>
       </div>
+
+      <div class="export-group exit-group">
+        <button type="button" class="btn-export btn-hide-bar" id="btnHideBanner" title="Ocultar este panel superior para ver solo la captura">
+          🔼 Ocultar barra
+        </button>
+        <button type="button" class="btn-export btn-exit" id="btnClosePreview" title="Cerrar vista previa y volver a la página original (ESC)">
+          ✕ Salir
+        </button>
+      </div>
     </div>
   </header>
+
+  <!-- Botón flotante compacto cuando se oculta el banner superior -->
+  <div id="floatingMiniBar" class="floating-mini-bar hidden">
+    <button type="button" class="mini-btn" id="btnShowBanner" title="Mostrar barra de herramientas">
+      🔽 Mostrar barra
+    </button>
+    <button type="button" class="mini-btn mini-btn-exit" id="btnMiniExit" title="Cerrar vista previa y volver a la página">
+      ✕ Salir
+    </button>
+  </div>
 
   <!-- Notificación flotante (Toast) -->
   <div id="toast" class="toast hidden"></div>
@@ -100,4 +119,3 @@
   <script src="preview.js"></script>
 </body>
 </html>
-

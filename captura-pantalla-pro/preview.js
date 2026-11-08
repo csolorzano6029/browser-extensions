@@ -1,4 +1,11 @@
 document.addEventListener('DOMContentLoaded', async () => {
+  const topbarEl = document.getElementById('topbar');
+  const floatingMiniBarEl = document.getElementById('floatingMiniBar');
+  const btnHideBanner = document.getElementById('btnHideBanner');
+  const btnShowBanner = document.getElementById('btnShowBanner');
+  const btnClosePreview = document.getElementById('btnClosePreview');
+  const btnMiniExit = document.getElementById('btnMiniExit');
+
   const pageTitleEl = document.getElementById('pageTitle');
   const modeBadgeEl = document.getElementById('modeBadge');
   const dimensionsInfoEl = document.getElementById('dimensionsInfo');
@@ -34,7 +41,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let captureData = null;
   let originalBackupCanvas = null;
-  let currentZoomMode = 'fit'; // 'fit' o porcentaje numérico (ej. 100)
+  let currentZoomMode = 'fit';
   let currentZoomPercent = 100;
 
   let isCropping = false;
@@ -51,6 +58,45 @@ document.addEventListener('DOMContentLoaded', async () => {
       toastEl.classList.add('hidden');
     }, 3200);
   }
+
+  /**
+   * Cierra la pestaña de vista previa y regresa automáticamente a la pestaña original
+   */
+  async function exitPreview() {
+    try {
+      if (captureData && captureData.sourceTabId && chrome.tabs) {
+        await chrome.tabs.update(captureData.sourceTabId, { active: true }).catch(() => {});
+      }
+    } catch (_) {}
+    window.close();
+  }
+
+  // Ocultar / Mostrar el banner superior
+  btnHideBanner.addEventListener('click', () => {
+    topbarEl.classList.add('hidden');
+    floatingMiniBarEl.classList.remove('hidden');
+  });
+
+  btnShowBanner.addEventListener('click', () => {
+    floatingMiniBarEl.classList.add('hidden');
+    topbarEl.classList.remove('hidden');
+  });
+
+  btnClosePreview.addEventListener('click', exitPreview);
+  btnMiniExit.addEventListener('click', exitPreview);
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (isCropping) {
+        isCropping = false;
+        btnToggleCrop.classList.remove('active');
+        cropOverlay.classList.add('hidden');
+        btnApplyCrop.classList.add('hidden');
+      } else {
+        exitPreview();
+      }
+    }
+  });
 
   function loadImage(dataUrl) {
     return new Promise((resolve, reject) => {
@@ -71,8 +117,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     return `${clean || 'captura'}_${dateStr}`;
   }
 
-  function updateDimensionsLabel() {
-    dimensionsInfoEl.textContent = `${canvas.width} × ${canvas.height} px`;
+  function updateDimensionsLabel(sliceCount) {
+    const extra = sliceCount && sliceCount > 1 ? ` (${sliceCount} secciones unidas)` : '';
+    dimensionsInfoEl.textContent = `${canvas.width} × ${canvas.height} px${extra}`;
   }
 
   function applyZoom() {
@@ -130,23 +177,73 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       loadingTextEl.textContent = `Uniendo ${slices.length} secciones de la página...`;
       const firstImg = await loadImage(slices[0].dataUrl);
-      const scaleX = firstImg.width / data.viewportWidth;
+      const scale = firstImg.width / data.viewportWidth;
+
+      const clipRect = data.clipRect || {
+        x: 0,
+        y: 0,
+        width: data.viewportWidth,
+        height: data.viewportHeight
+      };
+
+      const lastSlice = slices[slices.length - 1];
+      const finalCssHeight = Math.max(
+        data.viewportHeight,
+        lastSlice.actualY + data.viewportHeight
+      );
 
       const finalWidth = firstImg.width;
-      const finalHeight = Math.max(firstImg.height, Math.round(data.totalHeight * scaleX));
+      const finalHeight = Math.max(firstImg.height, Math.round(finalCssHeight * scale));
 
       canvas.width = finalWidth;
       canvas.height = finalHeight;
 
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, finalWidth, finalHeight);
+      // 1. Dibujar la primera captura completa arriba del todo
+      ctx.drawImage(firstImg, 0, 0, finalWidth, firstImg.height);
 
-      for (let i = 0; i < slices.length; i++) {
-        const slice = slices[i];
-        const img = i === 0 ? firstImg : await loadImage(slice.dataUrl);
-        const destY = Math.round(slice.actualY * scaleX);
-        ctx.drawImage(img, 0, destY, finalWidth, img.height);
+      // 2. Extender el color de fondo inferior para barras laterales fijas (ej. menú izquierdo de Gemini)
+      if (slices.length > 1 && finalHeight > firstImg.height) {
+        ctx.drawImage(
+          firstImg,
+          0,
+          Math.max(0, firstImg.height - 3),
+          finalWidth,
+          2,
+          0,
+          firstImg.height,
+          finalWidth,
+          finalHeight - firstImg.height
+        );
       }
+
+      // 3. Unir todas las secciones siguientes en su coordenada exacta
+      for (let i = 1; i < slices.length; i++) {
+        const slice = slices[i];
+        const img = await loadImage(slice.dataUrl);
+
+        if (data.isElementScroll) {
+          const sx = Math.max(0, Math.round(clipRect.x * scale));
+          const sy = Math.max(0, Math.round(clipRect.y * scale));
+          const sw = Math.min(img.width - sx, Math.round(clipRect.width * scale));
+          const sh =
+            i === slices.length - 1
+              ? img.height - sy
+              : Math.min(img.height - sy, Math.round(clipRect.height * scale));
+
+          const dx = sx;
+          const dy = Math.round((clipRect.y + slice.actualY) * scale);
+
+          if (sw > 0 && sh > 0) {
+            ctx.drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh);
+          }
+        } else {
+          const destY = Math.round(slice.actualY * scale);
+          ctx.drawImage(img, 0, destY, finalWidth, img.height);
+        }
+      }
+
+      originalBackupCanvas = cloneCanvas(canvas);
+      updateDimensionsLabel(slices.length);
     } else if (data.mode === 'partial') {
       loadingTextEl.textContent = 'Recortando área seleccionada...';
       const img = await loadImage(data.dataUrl);
@@ -162,17 +259,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       canvas.width = sw;
       canvas.height = sh;
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      originalBackupCanvas = cloneCanvas(canvas);
+      updateDimensionsLabel(1);
     } else {
-      // modo 'visible'
       loadingTextEl.textContent = 'Cargando captura visible...';
       const img = await loadImage(data.dataUrl);
       canvas.width = img.width;
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0);
-    }
 
-    originalBackupCanvas = cloneCanvas(canvas);
-    updateDimensionsLabel();
+      originalBackupCanvas = cloneCanvas(canvas);
+      updateDimensionsLabel(1);
+    }
 
     loadingStateEl.classList.add('hidden');
     canvasWrapperEl.classList.remove('hidden');
@@ -235,7 +334,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let targetCanvas = canvas;
     if (isJpg) {
-      // Asegurar fondo blanco para JPEG
       targetCanvas = document.createElement('canvas');
       targetCanvas.width = canvas.width;
       targetCanvas.height = canvas.height;
@@ -382,7 +480,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnApplyCrop.classList.add('hidden');
     btnResetCrop.classList.remove('hidden');
 
-    updateDimensionsLabel();
+    updateDimensionsLabel(1);
     applyZoom();
     showToast('✅ Recorte aplicado a la captura.');
   });
@@ -393,7 +491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     canvas.height = originalBackupCanvas.height;
     ctx.drawImage(originalBackupCanvas, 0, 0);
     btnResetCrop.classList.add('hidden');
-    updateDimensionsLabel();
+    updateDimensionsLabel(captureData?.slices?.length || 1);
     applyZoom();
     showToast('↩ Captura original restaurada.');
   });
@@ -415,7 +513,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     captureData = stored.lastCaptureData;
     await renderCapture(captureData);
 
-    // Verificar si se solicitó descarga directa automática (?action=pdf|png|jpg)
     const params = new URLSearchParams(window.location.search);
     const autoAction = params.get('action') || captureData.actionType || 'preview';
 
@@ -431,4 +528,3 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast(err.message, true);
   }
 });
-

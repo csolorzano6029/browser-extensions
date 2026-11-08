@@ -25,7 +25,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   flex-wrap: wrap;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
 }
@@ -59,7 +59,7 @@ body {
   font-size: 15px;
   font-weight: 700;
   color: #ffffff;
-  max-width: 280px;
+  max-width: 260px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -150,7 +150,7 @@ body {
   background: rgba(255, 255, 255, 0.12);
 }
 
-/* Controles de exportación */
+/* Controles de exportación y salida */
 .topbar-right {
   display: flex;
   align-items: center;
@@ -183,7 +183,7 @@ body {
 .btn-export {
   border: none;
   outline: none;
-  padding: 8px 14px;
+  padding: 8px 13px;
   border-radius: 7px;
   font-size: 12.5px;
   font-weight: 700;
@@ -224,6 +224,70 @@ body {
 .btn-copy {
   background: #334155;
   color: #f8fafc;
+}
+
+.btn-hide-bar {
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+}
+
+.btn-hide-bar:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.btn-exit {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+}
+
+.btn-exit:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+/* Mini barra flotante cuando el banner principal está oculto */
+.floating-mini-bar {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(10px);
+  padding: 6px;
+  border-radius: 999px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.mini-btn {
+  border: none;
+  outline: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mini-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.mini-btn-exit {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fecaca;
+}
+
+.mini-btn-exit:hover {
+  background: #ef4444;
+  color: #ffffff;
 }
 
 /* Workspace y Canvas */
@@ -330,4 +394,3 @@ body {
 .hidden {
   display: none !important;
 }
-

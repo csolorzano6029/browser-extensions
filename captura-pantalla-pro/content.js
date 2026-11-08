@@ -1,14 +1,71 @@
 (() => {
-  if (window.__CAPTURA_PRO_CONTENT_LOADED__) {
-    return;
+  // Permitir reinicializar funciones actualizadas si se recarga la extensión
+  if (window.__CAPTURA_PRO_CLEANUP_LISTENER__) {
+    try {
+      chrome.runtime.onMessage.removeListener(window.__CAPTURA_PRO_CLEANUP_LISTENER__);
+    } catch (_) {}
   }
-  window.__CAPTURA_PRO_CONTENT_LOADED__ = true;
 
   let fullPageState = null;
   let selectionHost = null;
 
   /**
-   * Encuentra si la página usa un contenedor interno con scroll en lugar del body/html
+   * Recorre todos los elementos del DOM incluyendo Web Components personalizados
+   * (como <infinite-scroller> en Gemini) y Shadow DOM abiertos.
+   */
+  function getAllElementsDeep(root = document.documentElement, list = []) {
+    if (!root) return list;
+    const elements = root.querySelectorAll ? root.querySelectorAll('*') : [];
+    for (const el of elements) {
+      list.push(el);
+      if (el.shadowRoot) {
+        getAllElementsDeep(el.shadowRoot, list);
+      }
+    }
+    return list;
+  }
+
+  /**
+   * Comprueba si un elemento realmente puede desplazarse verticalmente (scroll)
+   */
+  function canScrollVertically(el) {
+    if (!el || el === document.documentElement || el === document.body) return false;
+    const scrollH = el.scrollHeight;
+    const clientH = el.clientHeight;
+    if (!scrollH || !clientH || scrollH <= clientH + 25) return false;
+
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+
+    const oy = style.overflowY;
+    const o = style.overflow;
+    if (oy === 'hidden' || oy === 'clip' || oy === 'visible') return false;
+
+    // Si ya está desplazado hacia abajo, es 100% scrollable
+    if (el.scrollTop > 0) return true;
+
+    // Probar si acepta cambiar scrollTop programáticamente
+    const prev = el.scrollTop;
+    el.scrollTop = prev + 2;
+    const movedDown = el.scrollTop !== prev;
+    if (movedDown) {
+      el.scrollTop = prev;
+      return true;
+    }
+
+    if (prev > 0) {
+      el.scrollTop = Math.max(0, prev - 2);
+      const movedUp = el.scrollTop !== prev;
+      el.scrollTop = prev;
+      if (movedUp) return true;
+    }
+
+    return oy === 'auto' || oy === 'scroll' || oy === 'overlay' || o === 'auto' || o === 'scroll';
+  }
+
+  /**
+   * Encuentra el contenedor principal con scroll (sea window o un contenedor interno
+   * como en Google Gemini, ChatGPT, Claude, Notion, etc.)
    */
   function findScrollableTarget() {
     const docEl = document.scrollingElement || document.documentElement;
@@ -20,33 +77,38 @@
       body ? body.offsetHeight : 0
     );
 
-    if (docScrollHeight > window.innerHeight + 25) {
-      return { type: 'window', element: docEl, totalHeight: docScrollHeight };
-    }
-
-    // Buscar si es una SPA con un contenedor interno scrollable grande
+    const allElements = getAllElementsDeep(document.documentElement);
     let bestCandidate = null;
-    let maxScrollHeight = docScrollHeight;
-    const candidates = document.querySelectorAll('main, [role="main"], div, section, article');
+    let bestScore = 0;
 
-    for (const el of candidates) {
+    for (const el of allElements) {
+      if (!canScrollVertically(el)) continue;
+
       const rect = el.getBoundingClientRect();
-      if (rect.width < window.innerWidth * 0.5 || rect.height < window.innerHeight * 0.5) {
+      // Debe ocupar al menos una parte importante de la ventana (no un menú pequeño)
+      if (rect.width < window.innerWidth * 0.28 || rect.height < window.innerHeight * 0.28) {
         continue;
       }
-      const style = window.getComputedStyle(el);
-      const overflowY = style.overflowY;
-      if (
-        (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') &&
-        el.scrollHeight > el.clientHeight + 30 &&
-        el.scrollHeight > maxScrollHeight
-      ) {
-        maxScrollHeight = el.scrollHeight;
+      if (rect.bottom <= 0 || rect.top >= window.innerHeight) {
+        continue;
+      }
+
+      // Puntuar priorizando ancho del área principal y altura total de contenido
+      const widthRatio = rect.width / window.innerWidth;
+      const heightRatio = rect.height / window.innerHeight;
+      const score = el.scrollHeight * (widthRatio * widthRatio) * heightRatio;
+
+      if (score > bestScore) {
+        bestScore = score;
         bestCandidate = el;
       }
     }
 
-    if (bestCandidate) {
+    // Si la ventana principal casi no tiene scroll o el contenedor interno tiene mucho contenido
+    if (
+      bestCandidate &&
+      (docScrollHeight <= window.innerHeight + 40 || bestCandidate.scrollHeight > docScrollHeight * 0.7)
+    ) {
       return {
         type: 'element',
         element: bestCandidate,
@@ -64,7 +126,7 @@
   /**
    * Espera a que el navegador pinte los cambios en pantalla
    */
-  function waitForPaint(delayMs = 80) {
+  function waitForPaint(delayMs = 140) {
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -74,41 +136,136 @@
     });
   }
 
+  function recordElementForHiding(el, map) {
+    if (!el || map.has(el) || el === document.documentElement || el === document.body) return;
+    map.set(el, {
+      el,
+      origVisibility: el.style.getPropertyValue('visibility'),
+      origVisibilityPriority: el.style.getPropertyPriority('visibility'),
+      origOpacity: el.style.getPropertyValue('opacity'),
+      origOpacityPriority: el.style.getPropertyPriority('opacity')
+    });
+  }
+
   /**
-   * Detecta y guarda los elementos fixed/sticky para ocultarlos después de la primera captura
+   * Detecta barras flotantes superiores e inferiores (fixed, sticky o superpuestas como
+   * la caja "Preguntarle a Gemini" en Gemini) para que no tapen el texto al hacer scroll.
    */
-  function collectFixedAndStickyElements(excludeNode) {
-    const fixedEls = [];
-    const allElements = document.querySelectorAll('*');
+  function collectFloatingOverlays(scrollEl, isElementScroll) {
+    const topOverlays = new Map();
+    const bottomOverlays = new Map();
+
+    const sRect = isElementScroll
+      ? scrollEl.getBoundingClientRect()
+      : {
+          left: 0,
+          top: 0,
+          right: window.innerWidth,
+          bottom: window.innerHeight,
+          width: window.innerWidth,
+          height: window.innerHeight
+        };
+
+    const allElements = getAllElementsDeep(document.documentElement);
+
+    // 1. Elementos fixed y sticky globales
     for (const el of allElements) {
-      if (excludeNode && (el === excludeNode || excludeNode.contains(el))) {
-        continue;
-      }
+      if (isElementScroll && (el === scrollEl || el.contains(scrollEl))) continue;
       const style = window.getComputedStyle(el);
       if (style.position === 'fixed' || style.position === 'sticky') {
-        if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0) {
-          fixedEls.push({
-            el,
-            origVisibility: el.style.getPropertyValue('visibility'),
-            origVisibilityPriority: el.style.getPropertyPriority('visibility')
-          });
+        if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) {
+          continue;
+        }
+        const r = el.getBoundingClientRect();
+        if (r.height > window.innerHeight * 0.65) continue;
+        const centerY = r.top + r.height / 2;
+        if (centerY > window.innerHeight * 0.55) {
+          recordElementForHiding(el, bottomOverlays);
+        } else {
+          recordElementForHiding(el, topOverlays);
         }
       }
     }
-    return fixedEls;
+
+    // 2. Si es un contenedor interno (ej. Gemini / ChatGPT), detectar barras superpuestas
+    // encima de la parte superior o inferior de scrollEl mediante elementsFromPoint
+    if (isElementScroll && scrollEl) {
+      const sampleXs = [
+        sRect.left + sRect.width * 0.35,
+        sRect.left + sRect.width * 0.5,
+        sRect.left + sRect.width * 0.65
+      ];
+      const topSampleYs = [sRect.top + 16, sRect.top + 42, sRect.top + 68];
+      const bottomSampleYs = [
+        sRect.bottom - 18,
+        sRect.bottom - 48,
+        sRect.bottom - 85,
+        sRect.bottom - 125
+      ];
+
+      function findOverlayRoot(hitEl) {
+        if (!hitEl || hitEl === scrollEl || scrollEl.contains(hitEl) || hitEl.contains(scrollEl)) {
+          return null;
+        }
+        let candidate = hitEl;
+        let curr = hitEl.parentElement;
+        while (curr && curr !== document.body && curr !== document.documentElement) {
+          if (curr === scrollEl || curr.contains(scrollEl)) break;
+          const r = curr.getBoundingClientRect();
+          if (r.height > sRect.height * 0.42) break;
+          candidate = curr;
+          curr = curr.parentElement;
+        }
+        const cRect = candidate.getBoundingClientRect();
+        if (cRect.height <= 4 || cRect.height > sRect.height * 0.42) return null;
+        return candidate;
+      }
+
+      for (const x of sampleXs) {
+        for (const y of topSampleYs) {
+          if (y <= 0 || y >= window.innerHeight) continue;
+          const hits = document.elementsFromPoint(x, y);
+          for (const h of hits) {
+            if (h === scrollEl || scrollEl.contains(h)) break;
+            const rootOverlay = findOverlayRoot(h);
+            if (rootOverlay) recordElementForHiding(rootOverlay, topOverlays);
+          }
+        }
+        for (const y of bottomSampleYs) {
+          if (y <= 0 || y >= window.innerHeight) continue;
+          const hits = document.elementsFromPoint(x, y);
+          for (const h of hits) {
+            if (h === scrollEl || scrollEl.contains(h)) break;
+            const rootOverlay = findOverlayRoot(h);
+            if (rootOverlay) recordElementForHiding(rootOverlay, bottomOverlays);
+          }
+        }
+      }
+    }
+
+    return {
+      topOverlays: Array.from(topOverlays.values()),
+      bottomOverlays: Array.from(bottomOverlays.values())
+    };
   }
 
-  function setFixedElementsHidden(fixedEls, hidden) {
-    if (!fixedEls) return;
-    for (const item of fixedEls) {
+  function setElementsHidden(items, hidden) {
+    if (!items) return;
+    for (const item of items) {
       if (!item.el || !item.el.isConnected) continue;
       if (hidden) {
         item.el.style.setProperty('visibility', 'hidden', 'important');
+        item.el.style.setProperty('opacity', '0', 'important');
       } else {
         if (item.origVisibility) {
           item.el.style.setProperty('visibility', item.origVisibility, item.origVisibilityPriority || '');
         } else {
           item.el.style.removeProperty('visibility');
+        }
+        if (item.origOpacity) {
+          item.el.style.setProperty('opacity', item.origOpacity, item.origOpacityPriority || '');
+        } else {
+          item.el.style.removeProperty('opacity');
         }
       }
     }
@@ -132,7 +289,7 @@
         width: 0 !important;
         height: 0 !important;
       }
-      html, body {
+      * {
         scrollbar-width: none !important;
         -ms-overflow-style: none !important;
       }
@@ -146,22 +303,38 @@
     const origX = isElementScroll ? scrollEl.scrollLeft : window.scrollX;
     const origY = isElementScroll ? scrollEl.scrollTop : window.scrollY;
 
-    // Ir al inicio de la página para capturar el encabezado correctamente
+    // Desplazar al inicio (arriba del todo) para capturar desde el principio
     if (isElementScroll) {
-      scrollEl.scrollTo(0, 0);
+      scrollEl.scrollTop = 0;
+      scrollEl.scrollLeft = 0;
     } else {
       window.scrollTo(0, 0);
     }
 
-    await waitForPaint(150);
+    await waitForPaint(220);
 
-    const fixedElements = collectFixedAndStickyElements(scrollEl);
+    const { topOverlays, bottomOverlays } = collectFloatingOverlays(scrollEl, isElementScroll);
 
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const dpr = window.devicePixelRatio || 1;
 
-    // Recalcular altura total tras estar arriba
+    const sRect = isElementScroll
+      ? scrollEl.getBoundingClientRect()
+      : {
+          left: 0,
+          top: 0,
+          width: viewportWidth,
+          height: viewportHeight
+        };
+
+    const clipRect = {
+      x: Math.max(0, Math.round(sRect.left)),
+      y: Math.max(0, Math.round(sRect.top)),
+      width: Math.min(viewportWidth, Math.round(sRect.width)),
+      height: Math.min(viewportHeight, Math.round(sRect.height))
+    };
+
     const rawTotalHeight = isElementScroll
       ? Math.max(scrollEl.scrollHeight, viewportHeight)
       : Math.max(
@@ -172,22 +345,8 @@
           viewportHeight
         );
 
-    // Límite seguro para evitar desbordar el tamaño máximo de Canvas del navegador (~32,767 px físicos)
     const maxSafeCssHeight = Math.floor(30000 / dpr);
     const totalHeight = Math.min(rawTotalHeight, maxSafeCssHeight);
-
-    const steps = [];
-    let y = 0;
-    while (y < totalHeight) {
-      steps.push(y);
-      y += viewportHeight;
-      if (y >= totalHeight) {
-        break;
-      }
-    }
-    if (steps.length === 0) {
-      steps.push(0);
-    }
 
     fullPageState = {
       styleEl,
@@ -195,58 +354,88 @@
       scrollEl,
       origX,
       origY,
-      fixedElements,
+      topOverlays,
+      bottomOverlays,
       viewportWidth,
       viewportHeight,
       totalHeight,
-      dpr,
-      steps
+      clipRect,
+      dpr
     };
 
     return {
+      isElementScroll,
       viewportWidth,
       viewportHeight,
       totalHeight,
+      clipRect,
       dpr,
-      steps,
       pageTitle: document.title || 'captura-pagina',
       pageUrl: window.location.href
     };
   }
 
   /**
-   * Desplaza la página al paso indicado y devuelve la posición real alcanzada
+   * Desplaza la página o contenedor al paso indicado y devuelve métricas exactas
    */
   async function scrollToStep(stepIndex, targetY) {
     if (!fullPageState) {
       throw new Error('El estado de captura completa no está inicializado.');
     }
 
-    const { isElementScroll, scrollEl, fixedElements, viewportWidth, viewportHeight, totalHeight, dpr } =
-      fullPageState;
+    const {
+      isElementScroll,
+      scrollEl,
+      topOverlays,
+      bottomOverlays,
+      viewportWidth,
+      viewportHeight,
+      clipRect,
+      dpr
+    } = fullPageState;
 
-    // Ocultar elementos fixed/sticky a partir del segundo fragmento para que no se repitan
+    // Ocultar siempre barras flotantes inferiores durante las capturas para que no tapen el texto
+    setElementsHidden(bottomOverlays, true);
+
+    // Ocultar cabeceras flotantes superiores a partir del segundo fragmento (stepIndex > 0)
     if (stepIndex > 0) {
-      setFixedElementsHidden(fixedElements, true);
+      setElementsHidden(topOverlays, true);
     } else {
-      setFixedElementsHidden(fixedElements, false);
+      setElementsHidden(topOverlays, false);
     }
 
     if (isElementScroll) {
-      scrollEl.scrollTo(0, targetY);
+      scrollEl.scrollTop = targetY;
     } else {
       window.scrollTo(0, targetY);
     }
 
-    await waitForPaint(120);
+    await waitForPaint(160);
 
-    const actualY = isElementScroll ? scrollEl.scrollTop : window.scrollY;
+    const actualY = isElementScroll ? Math.round(scrollEl.scrollTop) : Math.round(window.scrollY);
+    const currentScrollHeight = isElementScroll
+      ? scrollEl.scrollHeight
+      : Math.max(
+          document.body ? document.body.scrollHeight : 0,
+          document.documentElement ? document.documentElement.scrollHeight : 0,
+          viewportHeight
+        );
+    const clientHeight = isElementScroll ? scrollEl.clientHeight : viewportHeight;
+
+    const maxSafeCssHeight = Math.floor(30000 / (window.devicePixelRatio || dpr));
+    const cappedScrollHeight = Math.min(currentScrollHeight, maxSafeCssHeight);
+    fullPageState.totalHeight = cappedScrollHeight;
+
+    const reachedBottom = actualY + clientHeight >= cappedScrollHeight - 4;
 
     return {
       actualY,
       viewportWidth: window.innerWidth || viewportWidth,
       viewportHeight: window.innerHeight || viewportHeight,
-      totalHeight,
+      totalHeight: cappedScrollHeight,
+      clientHeight,
+      clipRect,
+      reachedBottom,
       dpr: window.devicePixelRatio || dpr
     };
   }
@@ -256,10 +445,12 @@
    */
   function cleanupFullPageCapture() {
     if (!fullPageState) return;
-    const { styleEl, isElementScroll, scrollEl, origX, origY, fixedElements } = fullPageState;
+    const { styleEl, isElementScroll, scrollEl, origX, origY, topOverlays, bottomOverlays } =
+      fullPageState;
 
     try {
-      setFixedElementsHidden(fixedElements, false);
+      setElementsHidden(topOverlays, false);
+      setElementsHidden(bottomOverlays, false);
     } catch (_) {}
 
     try {
@@ -270,7 +461,8 @@
 
     try {
       if (isElementScroll && scrollEl) {
-        scrollEl.scrollTo(origX, origY);
+        scrollEl.scrollLeft = origX;
+        scrollEl.scrollTop = origY;
       } else {
         window.scrollTo(origX, origY);
       }
@@ -473,7 +665,7 @@
     const sizeBadge = shadow.getElementById('sizeBadge');
     const toolbar = shadow.getElementById('toolbar');
 
-    let mode = 'idle'; // 'drawing' | 'moving' | 'resizing' | 'selected'
+    let mode = 'idle';
     let activeHandle = null;
     let startX = 0;
     let startY = 0;
@@ -548,7 +740,6 @@
         return;
       }
 
-      // Nueva selección
       mode = 'drawing';
       startX = e.clientX;
       startY = e.clientY;
@@ -649,12 +840,11 @@
         viewportHeight: window.innerHeight,
         pageTitle: document.title || 'captura-parcial',
         pageUrl: window.location.href,
-        actionType // 'preview' | 'pdf' | 'png' | 'jpg'
+        actionType
       };
 
-      // Ocultar completamente el overlay antes de tomar la foto de la pestaña
       removePartialSelectionOverlay();
-      await waitForPaint(70);
+      await waitForPaint(80);
 
       chrome.runtime.sendMessage({
         type: 'EXECUTE_PARTIAL_CAPTURE',
@@ -682,10 +872,7 @@
     selectionHost = null;
   }
 
-  /**
-   * Listener principal de mensajes desde background.js o popup.js
-   */
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const messageListener = (message, _sender, sendResponse) => {
     if (!message || !message.type) return false;
 
     if (message.type === 'PING_CONTENT') {
@@ -720,5 +907,8 @@
     }
 
     return false;
-  });
+  };
+
+  window.__CAPTURA_PRO_CLEANUP_LISTENER__ = messageListener;
+  chrome.runtime.onMessage.addListener(messageListener);
 })();

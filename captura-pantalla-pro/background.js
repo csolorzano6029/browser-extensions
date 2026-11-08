@@ -42,7 +42,10 @@ async function safeCaptureVisibleTab(windowId, retries = 4) {
       return dataUrl;
     } catch (err) {
       const msg = (err && err.message) || String(err);
-      if (attempt < retries - 1 && (msg.includes('MAX_CAPTURE_VISIBLE_TAB') || msg.includes('quota') || msg.includes('activeTab'))) {
+      if (
+        attempt < retries - 1 &&
+        (msg.includes('MAX_CAPTURE_VISIBLE_TAB') || msg.includes('quota') || msg.includes('activeTab'))
+      ) {
         await sleep(650 * (attempt + 1));
         continue;
       }
@@ -52,21 +55,13 @@ async function safeCaptureVisibleTab(windowId, retries = 4) {
 }
 
 /**
- * Garantiza que content.js esté inyectado y activo en la pestaña actual
+ * Inyecta siempre la versión más reciente de content.js en la pestaña activa
  */
 async function ensureContentScript(tabId) {
-  try {
-    const res = await chrome.tabs.sendMessage(tabId, { type: 'PING_CONTENT' });
-    if (res && res.ok) return true;
-  } catch (_) {
-    // No está inyectado aún; lo inyectamos dinámicamente
-  }
-
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ['content.js']
   });
-
   await sleep(60);
   return true;
 }
@@ -79,7 +74,7 @@ function broadcastProgress(payload) {
 }
 
 /**
- * Ejecuta la captura de Página Completa (con scroll automático)
+ * Ejecuta la captura de Página Completa (con scroll automático en window o contenedor interno)
  */
 async function runFullPageCapture(tab, defaultAction = 'preview') {
   if (isRestrictedChromeUrl(tab.url)) {
@@ -93,7 +88,7 @@ async function runFullPageCapture(tab, defaultAction = 'preview') {
   broadcastProgress({
     status: 'preparing',
     percent: 5,
-    message: 'Preparando página para captura completa...'
+    message: 'Detectando contenido completo de la página...'
   });
 
   const prepResponse = await chrome.tabs.sendMessage(tab.id, { type: 'PREPARE_FULL_PAGE' });
@@ -103,33 +98,48 @@ async function runFullPageCapture(tab, defaultAction = 'preview') {
 
   const info = prepResponse.info;
   const slices = [];
+  let finalTotalHeight = info.totalHeight;
+  let finalClipRect = info.clipRect;
 
   try {
-    const totalSteps = info.steps.length;
+    const stepDelta = Math.max(120, (info.clipRect?.height || info.viewportHeight) - 35);
+    const maxSlices = 45;
+    let targetY = 0;
+    let prevActualY = -1;
 
-    for (let i = 0; i < totalSteps; i++) {
-      const targetY = info.steps[i];
-      const percent = Math.round(((i + 1) / totalSteps) * 90);
+    for (let stepIndex = 0; stepIndex < maxSlices; stepIndex++) {
+      const estTotalSteps = Math.max(1, Math.ceil(finalTotalHeight / stepDelta));
+      const percent = Math.min(94, Math.round(((stepIndex + 1) / estTotalSteps) * 90));
 
       broadcastProgress({
         status: 'capturing',
-        current: i + 1,
-        total: totalSteps,
+        current: stepIndex + 1,
+        total: estTotalSteps,
         percent,
-        message: `Capturando sección ${i + 1} de ${totalSteps}...`
+        message: `Capturando sección ${stepIndex + 1}...`
       });
 
       const stepRes = await chrome.tabs.sendMessage(tab.id, {
         type: 'SCROLL_TO_STEP',
-        stepIndex: i,
+        stepIndex,
         targetY
       });
 
       if (!stepRes || !stepRes.ok) {
-        throw new Error((stepRes && stepRes.error) || `Error al desplazar a la sección ${i + 1}.`);
+        throw new Error((stepRes && stepRes.error) || `Error al desplazar a la sección ${stepIndex + 1}.`);
       }
 
-      const { actualY, viewportWidth, viewportHeight, dpr } = stepRes.stepData;
+      const stepData = stepRes.stepData;
+      const { actualY, viewportWidth, viewportHeight, totalHeight, clipRect, reachedBottom, dpr } = stepData;
+
+      finalTotalHeight = totalHeight || finalTotalHeight;
+      finalClipRect = clipRect || finalClipRect;
+
+      // Si después del primer paso el scroll ya no avanzó más, hemos llegado al final real
+      if (stepIndex > 0 && actualY <= prevActualY) {
+        break;
+      }
+
       const dataUrl = await safeCaptureVisibleTab(tab.windowId);
 
       slices.push({
@@ -139,6 +149,14 @@ async function runFullPageCapture(tab, defaultAction = 'preview') {
         viewportHeight,
         dpr
       });
+
+      prevActualY = actualY;
+
+      if (reachedBottom) {
+        break;
+      }
+
+      targetY = actualY + stepDelta;
     }
   } finally {
     // Siempre restaurar el scroll y estilos originales de la página
@@ -158,11 +176,14 @@ async function runFullPageCapture(tab, defaultAction = 'preview') {
     createdAt: Date.now(),
     mode: 'full',
     actionType: defaultAction,
+    sourceTabId: tab.id,
+    isElementScroll: Boolean(info.isElementScroll),
+    clipRect: finalClipRect,
     pageTitle: info.pageTitle || tab.title || 'captura-completa',
     pageUrl: info.pageUrl || tab.url || '',
     viewportWidth: info.viewportWidth,
     viewportHeight: info.viewportHeight,
-    totalHeight: info.totalHeight,
+    totalHeight: finalTotalHeight,
     dpr: info.dpr,
     slices
   };
@@ -197,6 +218,7 @@ async function runVisibleAreaCapture(tab, defaultAction = 'preview') {
     createdAt: Date.now(),
     mode: 'visible',
     actionType: defaultAction,
+    sourceTabId: tab.id,
     pageTitle: tab.title || 'captura-visible',
     pageUrl: tab.url || '',
     dataUrl
@@ -237,6 +259,7 @@ async function handleExecutePartialCapture(senderTab, payload) {
     createdAt: Date.now(),
     mode: 'partial',
     actionType: payload.actionType || 'preview',
+    sourceTabId: senderTab.id,
     pageTitle: payload.pageTitle || senderTab.title || 'captura-parcial',
     pageUrl: payload.pageUrl || senderTab.url || '',
     dataUrl,
@@ -332,4 +355,3 @@ chrome.commands.onCommand.addListener(async (command) => {
     console.warn('Error ejecutando comando:', err);
   }
 });
-
