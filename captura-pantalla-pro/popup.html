@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Captura Pro — Google Chrome</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Encabezado -->
+    <header class="header">
+      <div class="brand">
+        <img src="icons/icon48.png" alt="Captura Pro" class="brand-icon" />
+        <div>
+          <h1 class="brand-title">Captura Pro</h1>
+          <p class="brand-subtitle">Completa o Parcial • PDF e Imagen</p>
+        </div>
+      </div>
+      <span class="badge-chrome">Chrome</span>
+    </header>
+
+    <!-- Selector de acción/formato -->
+    <section class="format-section">
+      <label class="section-label">¿Qué hacer al terminar la captura?</label>
+      <div class="format-pills" id="formatSelector">
+        <button type="button" class="pill active" data-action="preview" title="Abre la captura para revisarla y elegir PDF o Imagen">
+          ✨ Vista Previa
+        </button>
+        <button type="button" class="pill" data-action="pdf" title="Descarga automáticamente como documento PDF">
+          📄 Directo a PDF
+        </button>
+        <button type="button" class="pill" data-action="png" title="Descarga automáticamente como imagen PNG">
+          🖼️ Directo a PNG
+        </button>
+        <button type="button" class="pill" data-action="jpg" title="Descarga automáticamente como imagen JPG">
+          📷 Directo a JPG
+        </button>
+      </div>
+    </section>
+
+    <!-- Modos de captura -->
+    <section class="modes-section">
+      <label class="section-label">Selecciona el tipo de captura</label>
+
+      <button type="button" class="mode-card primary-card" id="btnFullPage">
+        <div class="mode-icon">📜</div>
+        <div class="mode-info">
+          <div class="mode-title-row">
+            <span class="mode-title">Página Completa</span>
+            <kbd class="shortcut">Alt+Shift+F</kbd>
+          </div>
+          <p class="mode-desc">Recorre y captura toda la página web de arriba a abajo automáticamente.</p>
+        </div>
+      </button>
+
+      <button type="button" class="mode-card" id="btnPartial">
+        <div class="mode-icon">✂️</div>
+        <div class="mode-info">
+          <div class="mode-title-row">
+            <span class="mode-title">Captura Parcial (Recorte)</span>
+            <kbd class="shortcut">Alt+Shift+S</kbd>
+          </div>
+          <p class="mode-desc">Selecciona con el ratón el área exacta de la página que deseas capturar.</p>
+        </div>
+      </button>
+
+      <button type="button" class="mode-card" id="btnVisible">
+        <div class="mode-icon">🖥️</div>
+        <div class="mode-info">
+          <div class="mode-title-row">
+            <span class="mode-title">Área Visible Actual</span>
+          </div>
+          <p class="mode-desc">Captura al instante únicamente lo que ves ahora mismo en pantalla.</p>
+        </div>
+      </button>
+    </section>
+
+    <!-- Estado / Barra de progreso -->
+    <div class="progress-box hidden" id="progressBox">
+      <div class="progress-header">
+        <span class="spinner"></span>
+        <span id="progressText">Preparando captura...</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progressBarFill"></div>
+      </div>
+      <p class="progress-note">Por favor, mantén la pestaña activa mientras se recorre la página.</p>
+    </div>
+
+    <!-- Mensaje de error -->
+    <div class="error-box hidden" id="errorBox"></div>
+
+    <!-- Pie -->
+    <footer class="footer">
+      <span>Formatos soportados: <strong>PDF, PNG, JPG</strong></span>
+      <button type="button" class="link-btn" id="btnOpenLast" title="Abrir la última captura guardada">
+        Última captura ↗
+      </button>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+

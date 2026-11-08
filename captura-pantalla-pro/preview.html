@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vista Previa y Guardado — Captura Pro</title>
+  <link rel="stylesheet" href="preview.css" />
+</head>
+<body>
+  <!-- Barra superior de herramientas y exportación -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <img src="icons/icon48.png" alt="Captura Pro" class="logo" />
+      <div class="meta-info">
+        <div class="title-row">
+          <h1 id="pageTitle" class="capture-title">Procesando captura...</h1>
+          <span id="modeBadge" class="mode-badge">Cargando</span>
+        </div>
+        <div class="sub-row">
+          <span id="dimensionsInfo">0 × 0 px</span>
+          <span class="dot">•</span>
+          <a id="sourceUrl" href="#" target="_blank" rel="noopener noreferrer" class="source-link">Ver página original ↗</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controles centrales (Zoom y Recorte adicional) -->
+    <div class="topbar-center">
+      <div class="tool-group">
+        <button type="button" class="tool-btn" id="btnZoomOut" title="Alejar">−</button>
+        <span class="zoom-label" id="zoomLabel">Ajustado</span>
+        <button type="button" class="tool-btn" id="btnZoomIn" title="Acercar">+</button>
+        <button type="button" class="tool-btn" id="btnZoomFit" title="Ajustar al ancho de pantalla">Ajustar</button>
+        <button type="button" class="tool-btn" id="btnZoom100" title="Tamaño real 100%">100%</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="tool-group">
+        <button type="button" class="tool-btn" id="btnToggleCrop" title="Seleccionar un área para recortar esta captura">
+          ✂️ Recortar
+        </button>
+        <button type="button" class="tool-btn hidden" id="btnApplyCrop" title="Aplicar el recorte seleccionado">
+          ✅ Aplicar recorte
+        </button>
+        <button type="button" class="tool-btn hidden" id="btnResetCrop" title="Restaurar captura original sin recorte">
+          ↩ Restaurar original
+        </button>
+      </div>
+    </div>
+
+    <!-- Botones de Guardado (PDF e Imagen) -->
+    <div class="topbar-right">
+      <div class="export-group pdf-group">
+        <select id="pdfLayoutSelect" class="pdf-select" title="Elige el tipo de formato de página del PDF">
+          <option value="continuous">PDF: Página continua (Sin cortes)</option>
+          <option value="a4">PDF: Paginado A4 (Para imprimir)</option>
+        </select>
+        <button type="button" class="btn-export btn-pdf" id="btnDownloadPdf">
+          📄 Guardar como PDF
+        </button>
+      </div>
+
+      <div class="export-group img-group">
+        <button type="button" class="btn-export btn-png" id="btnDownloadPng">
+          🖼️ Guardar PNG
+        </button>
+        <button type="button" class="btn-export btn-jpg" id="btnDownloadJpg">
+          📷 Guardar JPG
+        </button>
+        <button type="button" class="btn-export btn-copy" id="btnCopyClipboard" title="Copiar imagen al portapapeles">
+          📋 Copiar
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Notificación flotante (Toast) -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Área de lienzo (Canvas) -->
+  <main class="workspace" id="workspace">
+    <div id="loadingState" class="loading-state">
+      <div class="spinner-lg"></div>
+      <p id="loadingText">Generando captura en alta resolución...</p>
+    </div>
+
+    <div id="canvasWrapper" class="canvas-wrapper hidden">
+      <canvas id="captureCanvas"></canvas>
+      <!-- Capa de recorte interactivo dentro de la vista previa -->
+      <div id="cropOverlay" class="crop-overlay hidden">
+        <div id="cropBox" class="crop-box">
+          <span id="cropSizeLabel" class="crop-size-label">0 × 0 px</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="pdf-generator.js"></script>
+  <script src="preview.js"></script>
+</body>
+</html>
+

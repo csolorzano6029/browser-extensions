@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Captura Pro — Pantalla Completa y Parcial (PDF / Imagen)",
+  "version": "1.0.0",
+  "description": "Realiza capturas de pantalla de la página completa (con scroll automático), de un área parcial seleccionada o de la vista actual, y guárdalas como PDF o Imagen (PNG/JPG).",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Captura Pro — Capturar Página (PDF / Imagen)",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "capture-full-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+F"
+      },
+      "description": "Capturar página completa"
+    },
+    "capture-partial-area": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Capturar área parcial (seleccionar recorte)"
+    }
+  }
+}
